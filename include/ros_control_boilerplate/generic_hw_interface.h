@@ -69,7 +69,8 @@ public:
    * \param nh - Node handle for topics.
    * \param urdf - optional pointer to a parsed robot model
    */
-  GenericHWInterface(ros::NodeHandle &nh, urdf::Model *urdf_model = NULL);
+  GenericHWInterface(ros::NodeHandle &nh, urdf::Model *urdf_model = NULL,
+      const bool use_urdf = true);
 
   /** \brief Destructor */
   virtual ~GenericHWInterface() {}

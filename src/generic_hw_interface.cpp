@@ -44,17 +44,22 @@
 
 namespace ros_control_boilerplate
 {
-GenericHWInterface::GenericHWInterface(ros::NodeHandle &nh, urdf::Model *urdf_model)
+GenericHWInterface::GenericHWInterface(ros::NodeHandle &nh, urdf::Model *urdf_model,
+    const bool use_urdf)
   : name_("generic_hw_interface")
   , nh_(nh)
   , use_rosparam_joint_limits_(false)
   , use_soft_limits_if_available_(false)
+  , urdf_model_(NULL)
 {
   // Check if the URDF model needs to be loaded
-  if (urdf_model == NULL)
-    loadURDF(nh, "robot_description");
-  else
-    urdf_model_ = urdf_model;
+  if (use_urdf)
+  {
+    if (urdf_model == NULL)
+      loadURDF(nh, "robot_description");
+    else
+      urdf_model_ = urdf_model;
+  }
 
   // Load rosparams
   ros::NodeHandle rpnh(nh_, "hardware_interface"); // TODO(davetcoleman): change the namespace to "generic_hw_interface" aka name_
@@ -136,39 +141,51 @@ void GenericHWInterface::registerJointLimits(const hardware_interface::JointHand
   bool has_soft_limits = false;
 
   // Get limits from URDF
-  if (urdf_model_ == NULL)
+  if (urdf_model_)
   {
-    ROS_WARN_STREAM_NAMED(name_, "No URDF model loaded, unable to get joint limits");
-    return;
-  }
+    // Get limits from URDF
+    urdf::JointConstSharedPtr urdf_joint = urdf_model_->getJoint(joint_names_[joint_id]);
 
-  // Get limits from URDF
-  urdf::JointConstSharedPtr urdf_joint = urdf_model_->getJoint(joint_names_[joint_id]);
+    // Get main joint limits
+    if (urdf_joint == NULL)
+    {
+      ROS_ERROR_STREAM_NAMED(name_, "URDF joint not found " << joint_names_[joint_id]);
+      return;
+    }
 
-  // Get main joint limits
-  if (urdf_joint == NULL)
-  {
-    ROS_ERROR_STREAM_NAMED(name_, "URDF joint not found " << joint_names_[joint_id]);
-    return;
-  }
+    // Get limits from URDF
+    if (joint_limits_interface::getJointLimits(urdf_joint, joint_limits))
+    {
+      has_joint_limits = true;
+      ROS_DEBUG_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " has URDF position limits ["
+                                                              << joint_limits.min_position << ", "
+                                                              << joint_limits.max_position << "]");
+      if (joint_limits.has_velocity_limits)
+        ROS_DEBUG_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " has URDF velocity limit ["
+                                                                << joint_limits.max_velocity << "]");
+    }
+    else
+    {
+      if (urdf_joint->type != urdf::Joint::CONTINUOUS)
+        ROS_WARN_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " does not have a URDF "
+                              "position limit");
+    }
 
-  // Get limits from URDF
-  if (joint_limits_interface::getJointLimits(urdf_joint, joint_limits))
-  {
-    has_joint_limits = true;
-    ROS_DEBUG_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " has URDF position limits ["
-                                                            << joint_limits.min_position << ", "
-                                                            << joint_limits.max_position << "]");
-    if (joint_limits.has_velocity_limits)
-      ROS_DEBUG_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " has URDF velocity limit ["
-                                                              << joint_limits.max_velocity << "]");
-  }
-  else
-  {
-    if (urdf_joint->type != urdf::Joint::CONTINUOUS)
-      ROS_WARN_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " does not have a URDF "
-                            "position limit");
-  }
+    // Get soft limits from URDF
+    if (use_soft_limits_if_available_)
+    {
+      if (joint_limits_interface::getSoftJointLimits(urdf_joint, soft_limits))
+      {
+        has_soft_limits = true;
+        ROS_DEBUG_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " has soft joint limits.");
+      }
+      else
+      {
+        ROS_DEBUG_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " does not have soft joint "
+                               "limits");
+      }
+    }
+  }  // if urdf_model
 
   // Get limits from ROS param
   if (use_rosparam_joint_limits_)
@@ -184,21 +201,6 @@ void GenericHWInterface::registerJointLimits(const hardware_interface::JointHand
                                                                 << " has rosparam velocity limit ["
                                                                 << joint_limits.max_velocity << "]");
     }  // the else debug message provided internally by joint_limits_interface
-  }
-
-  // Get soft limits from URDF
-  if (use_soft_limits_if_available_)
-  {
-    if (joint_limits_interface::getSoftJointLimits(urdf_joint, soft_limits))
-    {
-      has_soft_limits = true;
-      ROS_DEBUG_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " has soft joint limits.");
-    }
-    else
-    {
-      ROS_DEBUG_STREAM_NAMED(name_, "Joint " << joint_names_[joint_id] << " does not have soft joint "
-                             "limits");
-    }
   }
 
   // Quit we we haven't found any limits in URDF or rosparam server
